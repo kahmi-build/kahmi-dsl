@@ -1,7 +1,6 @@
 # kahmi-dsl
 
-This is a Python-based configuration language for the [Kahmi](https://github.com/kahmi-build)
-build system that is heavily inspired by Groovy and Gradle.
+The Kahmi DSL is an extension of the Python language with support for Groovy-like closures.
 
 __Example:__
 
@@ -10,16 +9,35 @@ buildscript {
   dependencies = ["kahmi-git", "kahmi-cxx"]
 }
 
-let cxx = load("kahmi-cxx")
-let git = load("kahmi-git")
+def cxx = load("kahmi-cxx")
+def git = load("kahmi-git")
 
 name = "myproject"
 version = git.version()
 
-cxx.build("main") {
+cxx.executable {
   srcs = glob("src/*.cpp")
-  type = "executable"
 }
+```
+
+This code is transpiled to the following Python code:
+
+```python
+@__closure__.sub
+def _closure_1(__closure__):
+  __closure__['dependencies'] = ['kahmi-git', 'kahmi-cxx']
+__closure__['buildscript'](_closure_1)
+
+cxx = __closure__['load']('kahmi-cxx')
+git = __closure__['load']('kahmi-git')
+
+__closure__['name'] = 'myproject'
+__closure__['version'] = git.version()
+
+@__closure__.sub
+def _closure_2(__closure__):
+  __closure__['srcs'] = __closure__['glob']['src/*.cpp']
+__closure__['cxx'].executable(_closure_2)
 ```
 
 ## Syntax & Semantics
@@ -29,34 +47,33 @@ swaps between DSL parsing and Python code parsing.
 
 ### Kahmi DSL Syntax
 
-1. **Define a local variable with the `let` Keyword**
+1. **Define a local variable with the `def` Keyword**
 
-    Local variables are defined using the `let` keyword. The variable can then be addressed in
+    Local variables are defined using the `def` keyword. The variable can then be addressed in
     Python expressions or as call block targets (see below). The right hand side of the assignment
     must be a Python expression.
 
     ```python
-    let my_variable = 42
+    def my_variable = 42
     ```
 
-2. **Set a property on the current context object**
+2. **Set owner/delegate property**
 
-    The same syntax but without the `let` keyword assigns the value to a member of the current
-    context object instead of to a local variable.
+    Assigning to a name that was not previously defined with the `def` keyword will attempt to
+    assign the variable to a property of the closure's owner or delegate, or any of the parent
+    closures.
 
     ```python
-    nmae = "my-project"
+    name = "my-project"
     version = git.version()
     ```
 
-3. **Configure blocks**
+3. **Parentheses-less function calls**
 
-    A configure block basically generates a Python function, called the "closure", and passes it
-    to the specified target. The closure that is defined after the target is passed to the target
-    by either calling it's `configure()` method or calling the target directly. 
+    Functions may be called without parentheses.
 
     ```python
-    print("Hello, World!")  # Call without body
+    print "Hello, World!"  # Call without body
 
     buildscript {
       dependencies = ["kahmi-python"]
@@ -67,37 +84,34 @@ swaps between DSL parsing and Python code parsing.
     }
     ```
 
-    > At the root level, every Kahmi script is basically a closure that is executed against the
-    > main context object.
+4. **Closures**
 
-### Python Syntax Extensions
-
-When parsing a Python expression, Kahmi injects support for multi-line lambdas and macros.
-
-1. **Multi-line lambdas**
-
-    The Kahmi DSL parser injects the ability to define multi-line lambdas in any Python
-    expression. The lambda syntax is inspired by Javascript/Typescript and uses `=>` as
-    the lambda arrow operation to connect the argument definition with the lambda body.
-
-    A lambda with braces requires a return statement, otherwhise the return value of the
-    lambda will be `None`. Single-statement lambdas are not currently supported with this
-    syntax (although you can always fall back to standard syntax `lambda: <expr>`).
+    The Kamhi DSL provides a syntax for defining a `kahmi.core.closure.Closure` object. It is
+    essentially a multi-line lambda definition enclosed in curly braces, similar to how other
+    languages define lambdas (e.g. Java, TypeScript, Groovy).
 
     ```python
-    let myFunc = () => {
+    def get_random_number = {
       import random
-      return random.random()
+      random.randint(0, 255)
     }
 
-    print(myFunc())
+    print get_random_number()
     ```
 
-    Nesting lambdas is supported and has the expected semantics except if used in comprehensions
-    (as they introduce a new scope that can not be captured by the function definition that is
-    a multi-line lambda is transpiled to).
+    The last expression in a closure is it's return value, but the `return` keyword is of course
+    also supported. Closures may accept arguments by defining the parameter list before an arrow.
 
-2. **Macros**
+    ```python
+    def incrementer = n -> { n + 1 }
+    def adder = (a, b) -> { a + b }
+    ```
+
+    > Note: Python 3 set syntax is not supported in Kahmi. For example, `{a, b, c}` would be
+    > interpreter as a closure returning a tuple of the values a, b and c instead of a set that
+    > containts the three values.
+
+5. **Macros**
 
     Macros are plugins that can be enabled in the Kahmi DSL parser to implement custom parsing
     logic following a macro identifier. The Kahmi DSL parser comes with a YAML plugin out of the
@@ -110,84 +124,6 @@ When parsing a Python expression, Kahmi injects support for multi-line lambdas a
         - kahmi-python
       }
     }
-    ```
-
-3. **Dynamic name lookup**
-
-    Names are resolved slightly different in Kahmi Python expressions. The local scope will always
-    be resolved first. Subsequently, the current context object's members are checked, then the
-    parent closure's local variables and context object, etc. Then finally, the global variables
-    and builtins.
-
-    ```python
-    dependencies = ["kahmi-python"]
-    print(dependencies)
-    print('dependencies' in locals())
-    print('dependencies' in vars(self))
-    ```
-
-    > __Explanation__: The property assignment sets the `dependencies` attribute on the current
-    > context object. Looking up the variable will first search it in the locals, but not find it
-    > there and subsequently find it in the context object (also referrable to as `self`).
-
-## Built-ins
-
-Kahmi only provides two additional built-in functions on top of what is provided by Python, and
-they are only necessary for the execution of Kahmi's generated Python code.
-
-| Name | Description |
-| ---- | ----------- |
-| `self` | The root context object for the script. |
-| `__lookup__(name, locals_, ctx)` | Helper function to resolve the targets of call blocks. |
-
-## Under the hood
-
-Kahmi comes with a simple cli that allows you to run any Kahmi script, but given the limited
-ability to override the root context object it is expected that it does not serve much use outside
-of debugging and development.
-
-    $ python -m kahmi.dsl examples/hello.kmi
-
-Using the `-E` option, you can retrieve the Python code that a Kahmi file is transpiled to. This
-is especially useful to understand how Kahmi constructs are converted into Python. Below are some
-examples:
-
-```python
-let msg = (name) => {
-  return 'Hello, ' + name
-}('World')
-
-print(msg)
-```
-
-```python
-def lambda_stdin_1_10(name):
-    return 'Hello, ' + name
-
-
-msg = lambda_stdin_1_10('World')
-__runtime__['print'](msg)
-```
-
----
-
-```python
-buildscript {
-  dependencies = ["kahmi-python"]
-}
-```
-
-```python
-@__runtime__.closure()
-def __configure_buildscript(self):
-    __runtime__.set_object_property(self, 'dependencies', ['kahmi-python'])
-
-
-__configure_buildscript_self_target = __runtime__['buildscript']
-with __runtime__.pushing(__runtime__['locals']()):
-    __runtime__.configure_object(__configure_buildscript_self_target,
-        __configure_buildscript)
-```
 
 ---
 
